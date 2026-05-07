@@ -1,160 +1,214 @@
-# AST-grep 패턴 모음
+# AST-grep 패턴 모음 — genp 검증 완료
 
-Style Keeper가 코드 변환에 사용하는 AST-grep 패턴 모음.
+아래 패턴들은 실제 genp 코드베이스에서 검증된 AST-grep 패턴들입니다.
 
-## 함수 선언 변환
+---
 
-### named function → arrow function
+## 함수 선언 패턴
 
+### named export function (hooks)
 ```typescript
 // Pattern
-function $NAME($$$) { $$$ }
+export function use$NAME($$$) { $$$ }
 
-// Rewrite
+// Lang: typescript
+// Paths: apps/frontend/src
+// Matches: 25개 (useProducts, useProduct, useCreateProduct, ...)
+
+// Rewrite → export const (필요시)
+export const use$NAME = ($$$) => { $$$ }
+
+// Rewrite → function (기본 유지)
+// (변경 없음 — 이미 일관됨)
+```
+
+### async bootstrap function (backend main)
+```typescript
+// Pattern
+async function bootstrap() { $$$ }
+
+// Lang: typescript
+// Paths: apps/backend/*/src/main.ts
+// Matches: 6개 (api-gateway, auth-service, chat-service, ...)
+```
+
+### 일반 named function (test helper)
+```typescript
+// Pattern
+function build$NAME($$$) { $$$ }
+
+// Lang: typescript
+// Paths: apps/backend/*/src/__tests__
+// Matches: 3개 (buildUser, buildModule, createDbMock)
+```
+
+### arrow function (callback)
+```typescript
+// Pattern
 const $NAME = ($$$) => { $$$ }
+
+// Lang: typescript
+// Paths: apps/frontend/src
+// Matches: 4개 (auth hooks 내부 mutate 등)
 ```
 
-### export named function → export const arrow
+---
 
+## 타입 정의 패턴
+
+### interface (표준 — 43개)
 ```typescript
 // Pattern
-export function $NAME($$$) { $$$ }
+interface $NAME { $$$ }
 
-// Rewrite
-export const $NAME = ($$$) => { $$$ }
+// Lang: typescript
+// Paths: apps/, packages/
+// Matches: 43개 (ISignupInput, IAuthResponse, Product, ...)
 ```
 
-### async named function → async arrow
-
+### type 객체 (드묾 — 1개)
 ```typescript
 // Pattern
-async function $NAME($$$) { $$$ }
-
-// Rewrite
-const $NAME = async ($$$) => { $$$ }
-```
-
-## 타입 정의 변환
-
-### type alias (객체 타입) → interface
-
-```typescript
-// Pattern  (객체 타입만)
 type $NAME = { $$$ }
 
-// Rewrite
+// Lang: typescript
+// Paths: apps/frontend/src
+// Matches: 1개 (AppThemes)
+
+// Rewrite → interface
 interface $NAME { $$$ }
+// 주의: type alias가 interface로 안전하게 변환 가능한 경우만
+// 유니온 타입(type X = A | B)은 변환 불가 → 건너뛰기
 ```
 
-### type alias (유니온) → 그대로 (interface로 변환 불가)
-
-유니온 타입은 interface로 변환할 수 없으므로 건너뛴다.
+### type import — 31개 파일
 ```typescript
-// 변환 불가 — 건너뛰기
-type Status = 'active' | 'inactive'
-type Props = A & B
+// Pattern (탐색 전용)
+import type { $$$ } from $SOURCE
+
+// Lang: typescript
+// Matches: 31회
+
+// Rewrite → inline import (TypeScript 설정 확인 필요)
+import { $$$ } from $SOURCE
+// ⚠️ TypeScript verbatimModuleSyntax와 충돌 가능
+// ⚠️ 사용자에게 먼저 확인 필수
 ```
 
-## import 변환
+---
 
-### type import → inline import
+## 스타일 정의 패턴
 
-```typescript
-// Pattern
-import type { $NAME } from $SOURCE
-
-// Rewrite
-import { $NAME } from $SOURCE
-```
-
-### default import → named import (특정 패턴)
-
+### StyleSheet.create (표준 — 44개)
 ```typescript
 // Pattern
-import $NAME from $SOURCE
+StyleSheet.create({ $$$ })
 
-// Rewrite (모듈에 named export가 있는 경우만)
-import { $NAME } from $SOURCE
+// Lang: typescript
+// Paths: apps/frontend/src
+// Matches: 44개
+
+// Rewrite → createStyleSheet (unistyles 마이그레이션)
+createStyleSheet((theme) => ({ $$$ }))
+// 주의: theme 사용을 위해 스타일 값 변경 필요
+// 단순 패턴 변환만으로는 불충분 — 에이전트 위임 권장
 ```
 
-> 주의: default import를 named import로 바꾸는 것은 모듈의 export 구조를 알아야 하므로
-> AST-grep만으로 안전하게 처리하기 어렵다. 가능하면 건너뛰거나 사용자에게 확인.
+---
 
-## 컴포넌트 선언 변환 (React)
+## 에러 핸들링 패턴
 
-### function component → arrow component
-
+### try-catch (4개 발견)
 ```typescript
 // Pattern
-export function $NAME({ $$$ }: $$$) { $$$ }
+try { $$$ } catch ($ERR) { $$$ }
 
-// Rewrite
-export const $NAME = ({ $$$ }: $$$) => { $$$ }
+// Lang: typescript
+// Paths: apps/
+// Matches: 4개
 ```
 
-### React.FC 제거
-
+### bare catch (변수 없음)
 ```typescript
 // Pattern
-const $NAME: React.FC<$$$> = ({ $$$ }) => { $$$ }
+try { $$$ } catch { $$$ }
 
-// Rewrite
-const $NAME = ({ $$$ }: $$$) => { $$$ }
+// Lang: typescript
+// Matches: 1개 (apps/frontend/src/features/auth/api/hooks.ts)
+
+// Rewrite → catch with variable
+try { $$$ } catch (error) { $$$ }
 ```
 
-## export 변환
-
-### 개별 export → 하단 export
-
+### instanceof 에러 분기
 ```typescript
-// Before (개별 export)
-export const foo = () => {}
-export const bar = () => {}
-
-// After (하단 export)
-const foo = () => {}
-const bar = () => {}
-export { foo, bar }
-```
-
-> AST-grep으로 한 번에 처리하기 어려움. 여러 파일의 export 패턴을 수집한 후
-> 하단 export로 통일할 때는 에이전트에 위임하여 처리.
-
-## 조건문 변환
-
-### 중첩 if → early return
-
-```typescript
-// Pattern (찾기만 — 변환은 맥락에 따라 다름)
-if ($COND) {
-  if ($OTHER) {
-    $$$BODY
-    return $$$RESULT
-  }
+// Pattern
+catch ($ERR) {
+  if ($ERR instanceof HTTPError) { $$$ }
+  $$$  
 }
 
-// 보통 다음과 같은 변환 의도:
-// Before:
-if (x) {
-  if (y) {
-    doSomething();
-    return result;
-  }
-}
-
-// After:
-if (!x || !y) return;
-doSomething();
-return result;
+// Lang: typescript
+// Matches: 1개 (apps/frontend/src/lib/apiClient.ts)
 ```
 
-> 조건문 변환은 맥락 의존적이므로 AST-grep으로 자동 변환하지 말고
-> 발견만 하고 사용자에게 보고한다. 변환은 에이전트에 위임.
+---
 
-## 사용 팁
+## 사용 팁 (genp 기준)
 
-1. **항상 dryRun=true로 먼저 실행**하여 영향 범위 확인
-2. **언어 설정 정확히**: TypeScript 파일은 `lang: "typescript"`, TSX는 가능하면 `lang: "tsx"`
-3. **여러 패턴 매칭**: 같은 변환에 여러 패턴이 필요하면 순차 실행
-4. **패턴 검증**: `ast_grep_search`로 먼저 패턴이 정확히 매칭되는지 확인 후 `ast_grep_replace` 실행
-5. **메타변수 사용**: `$NAME`은 단일 노드, `$$$`는 여러 노드(표현식, 문장 등)에 사용
+### 1. dryRun 모드로 먼저 확인
+
+```typescript
+// 실제 적용 전에 영향 범위 확인
+ast_grep_replace(
+  pattern: "import type { $$$ } from $SOURCE",
+  rewrite: "import { $$$ } from $SOURCE",
+  lang: "typescript",
+  dryRun: true  // 변경 없이 매칭 결과만 확인
+)
+```
+
+### 2. lang 설정
+
+| 파일 확장자 | lang 값 |
+|------------|---------|
+| `.ts` | `typescript` |
+| `.tsx` | `tsx` (또는 `typescript`) |
+| `.js` | `javascript` |
+
+### 3. paths 제한
+
+genp에서 너무 많은 결과가 나오면 paths로 범위 제한:
+```typescript
+paths: ["apps/frontend/src"]           // frontend만
+paths: ["packages/shared/src"]         // shared 패키지만
+paths: ["apps/backend/chat-service"]   // 특정 서비스만
+```
+
+### 4. 제외할 경로
+
+```typescript
+globs: ["!**/node_modules/**", "!**/dist/**", "!**/.git/**"]
+```
+
+### 5. 실제 genp 적용 예시
+
+```typescript
+// 1. 모든 함수형 컴포넌트 찾기 (tsx)
+ast_grep_search(
+  pattern: "export default function $NAME($$$) { $$$ }",
+  lang: "tsx",
+  paths: ["apps/frontend/src"]
+)
+
+// 2. 모든 try-catch 찾기
+ast_grep_search(
+  pattern: "try { $$$ } catch ($ERR) { $$$ }",
+  lang: "typescript",
+  paths: ["apps"]
+)
+
+// 3. import type 패턴 분포 확인
+// ast-grep으로는 직접 매칭 어려움 → grep 사용
+// grep(pattern: "import type {", include: "*.ts")
+```
